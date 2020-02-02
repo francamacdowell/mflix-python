@@ -47,8 +47,10 @@ def get_db():
         MFLIX_DB_URI,
         # TODO: Connection Pooling
         # Set the maximum connection pool size to 50 active connections.
+        maxPoolSize=50,
         # TODO: Timeouts
         # Set the write timeout limit to 2500 milliseconds.
+        wTimeoutMS=2500
         )[MFLIX_DB_NAME]
     return db
 
@@ -93,7 +95,7 @@ def get_movies_faceted(filters, page, movies_per_page):
     sort_key = "tomatoes.viewer.numReviews"
 
     pipeline = []
-
+    
     if "cast" in filters:
         pipeline.extend([{
             "$match": {"cast": {"$in": filters.get("cast")}}
@@ -152,6 +154,7 @@ def get_movies_faceted(filters, page, movies_per_page):
     # TODO: Faceted Search
     # Add the necessary stages to the pipeline variable in the correct order.
     # pipeline.extend(...)
+    pipeline.extend([skip_stage, limit_stage, facet_stage])
 
     try:
         movies = list(db.movies.aggregate(pipeline, allowDiskUse=True))[0]
@@ -258,20 +261,21 @@ def get_movie(id):
 
         # TODO: Get Comments
         # Implement the required pipeline.
-        pipeline = [
-            {
+        # pipeline = [
+        lick =     {
                 "$match": {
-                    "_id": ObjectId(id)
+                    "_id": "$movie_id"
                 }
             }
-        ]
+        pipeline = [lick]
+
 
         movie = db.movies.aggregate(pipeline).next()
         return movie
 
     # TODO: Error Handling
     # If an invalid ID is passed to `get_movie`, it should return None.
-    except (StopIteration) as _:
+    except InvalidId as InvalidName:
 
         """
         Ticket: Error Handling
@@ -281,10 +285,11 @@ def get_movie(id):
         `get_movie` returning None.
         """
 
+
         return None
 
     except Exception as e:
-        return {}
+        return None
 
 
 def get_all_genres():
@@ -324,7 +329,11 @@ def add_comment(movie_id, user, comment, date):
     """
     # TODO: Create/Update Comments
     # Construct the comment document to be inserted into MongoDB.
-    comment_doc = { "some_field": "some_value" }
+    comment_doc = { "name": user["name"],
+                    "email": user["email"],
+                    "movie_id": movie_id,
+                    "text": comment,
+                    "date": date,}
     return db.comments.insert_one(comment_doc)
 
 
@@ -338,8 +347,8 @@ def update_comment(comment_id, user_email, text, date):
     # Use the user_email and comment_id to select the proper comment, then
     # update the "text" and "date" of the selected comment.
     response = db.comments.update_one(
-        { "some_field": "some_value" },
-        { "$set": { "some_other_field": "some_other_value" } }
+        { "_id": comment_id, "email": user_email },
+        { "$set": { "text": text, "date": date } }
     )
 
     return response
@@ -360,7 +369,7 @@ def delete_comment(comment_id, user_email):
 
     # TODO: Delete Comments
     # Use the user_email and comment_id to delete the proper comment.
-    response = db.comments.delete_one( { "_id": ObjectId(comment_id) } )
+    response = db.comments.delete_one( { "comment_id": comment_id, "user_email": user_email } )
     return response
 
 
@@ -387,7 +396,7 @@ def get_user(email):
     """
     # TODO: User Management
     # Retrieve the user document corresponding with the user's email.
-    return db.users.find_one({ "some_field": "some_value" })
+    return db.users.find_one({ "email": email })
 
 
 def add_user(name, email, hashedpw):
@@ -409,9 +418,9 @@ def add_user(name, email, hashedpw):
         # TODO: Durable Writes
         # Use a more durable Write Concern for this operation.
         db.users.insert_one({
-            "name": "mongo",
-            "email": "mongo@mongodb.com",
-            "password": "flibbertypazzle"
+            "name": name,
+            "email": email,
+            "password": hashedpw
         })
         return {"success": True}
     except DuplicateKeyError:
@@ -430,8 +439,8 @@ def login_user(email, jwt):
         # Use an UPSERT statement to update the "jwt" field in the document,
         # matching the "user_id" field with the email passed to this function.
         db.sessions.update_one(
-            { "some_field": "some_value" },
-            { "$set": { "some_other_field": "some_other_value" } }
+            { "user_id": email },
+            { "$set": { "jwt": jwt } }
         )
         return {"success": True}
     except Exception as e:
@@ -448,7 +457,7 @@ def logout_user(email):
     try:
         # TODO: User Management
         # Delete the document in the `sessions` collection matching the email.
-        db.sessions.delete_one({ "some_field": "some_value" })
+        db.sessions.delete_one({ "user_id": email })
         return {"success": True}
     except Exception as e:
         return {"error": e}
@@ -463,7 +472,7 @@ def get_user_session(email):
     try:
         # TODO: User Management
         # Retrieve the session document corresponding with the user's email.
-        return db.sessions.find_one({ "some_field": "some_value" })
+        return db.sessions.find_one({ "user_id": email })
     except Exception as e:
         return {"error": e}
 
@@ -476,8 +485,8 @@ def delete_user(email):
     try:
         # TODO: User Management
         # Delete the corresponding documents from `users` and `sessions`.
-        db.sessions.delete_one({ "some_field": "some_value" })
-        db.users.delete_one({ "some_field": "some_value" })
+        db.sessions.delete_one({ "user_id": email })
+        db.users.delete_one({ "email": email })
         if get_user(email) is None:
             return {"success": True}
         else:
@@ -504,8 +513,8 @@ def update_prefs(email, prefs):
         # TODO: User preferences
         # Use the data in "prefs" to update the user's preferences.
         response = db.users.update_one(
-            { "some_field": "some_value" },
-            { "$set": { "some_other_field": "some_other_value" } }
+            { "email": email },
+            { "$set": { "preferences": prefs } }
         )
         if response.matched_count == 0:
             return {'error': 'no user found'}
